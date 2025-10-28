@@ -1,0 +1,94 @@
+import { useState, useEffect, useRef } from 'react';
+import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
+
+export interface PoseLandmark {
+  x: number;
+  y: number;
+  z: number;
+  visibility?: number;
+}
+
+export const usePoseDetection = () => {
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const poseLandmarkerRef = useRef<PoseLandmarker | null>(null);
+
+  useEffect(() => {
+    const initializePoseLandmarker = async () => {
+      try {
+        const vision = await FilesetResolver.forVisionTasks(
+          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm'
+        );
+        
+        const poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
+            delegate: 'GPU'
+          },
+          runningMode: 'VIDEO',
+          numPoses: 1,
+          minPoseDetectionConfidence: 0.3,
+          minPosePresenceConfidence: 0.3,
+          minTrackingConfidence: 0.3
+        });
+        
+        poseLandmarkerRef.current = poseLandmarker;
+        setIsLoading(false);
+      } catch (err) {
+        console.error('Failed to initialize pose detection:', err);
+        setError(err instanceof Error ? err.message : 'Failed to initialize pose detection');
+        setIsLoading(false);
+      }
+    };
+
+    initializePoseLandmarker();
+
+    return () => {
+      if (poseLandmarkerRef.current) {
+        poseLandmarkerRef.current.close();
+        poseLandmarkerRef.current = null;
+      }
+    };
+  }, []);
+
+  const detectPose = (video: HTMLVideoElement, canvas: HTMLCanvasElement) => {
+    if (!poseLandmarkerRef.current || video.readyState !== 4) {
+      return null;
+    }
+
+    try {
+      const timestamp = performance.now();
+      const results = poseLandmarkerRef.current.detectForVideo(video, timestamp);
+
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        if (results.landmarks && results.landmarks.length > 0) {
+          const drawingUtils = new DrawingUtils(ctx);
+          for (const landmarks of results.landmarks) {
+            drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, {
+              color: '#00d9ff',
+              lineWidth: 4
+            });
+            drawingUtils.drawLandmarks(landmarks, {
+              color: '#ff0364',
+              lineWidth: 2
+            });
+          }
+          return results.landmarks[0];
+        }
+      }
+      return null;
+    } catch (err) {
+      console.error('Error in pose detection:', err);
+      return null;
+    }
+  };
+
+  return {
+    detectPose,
+    isLoading,
+    error
+  };
+};
